@@ -1,0 +1,209 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: nginx ipv6 stack
+
+Parameters:
+  VPC:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC Leveraged for Deployment
+  TaskName:
+    Description: The docker registry to pull the application
+    Type: String
+  DockerImage:
+    Description: The name of the docker image in the specified registry.  Format <registry>/<image>[:<tag>]
+    Type: String
+  ECSCluster:
+    Description: The ECS Cluster ID.
+    Type: String
+  ContainerPort:
+    Description: The port to map to the container.
+    Type: String
+  ApplicationEnvironment:
+    Default: dev
+    Description: Enviroment variable to drive Application properties
+    Type: String
+    AllowedValues:
+    - dev
+    - stg
+    - prd   
+  LoadBalancerScheme:
+    Default: internal
+    Description: Internal or External facing Load Balancer
+    Type: String
+    AllowedValues:
+    - internal
+    - internet-facing
+  LoadBalancerSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Select the subnets associated with the load balancer.  Public or
+      Private depending on the need.
+  LoadBalancerSecurityGroup:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+    Description: Security Group leveraged by ALB
+  HealthCheckPath:
+    Description: The relative path of the health check for the service.
+    Type: String
+    Default: "/"
+  HealthCheckResponse:
+    Description: The HTTP response code for the healthcheck. Ex 200 or 200-299 (valid values 200-499)
+    Type: String
+    Default: '200-499'
+  CertificateArn:
+    Description: Load balancer certificate resource name.
+    Type: String
+  ContainerMemory:
+    Default: '512'
+    Description: Memory allocated to the container.
+    Type: String
+  DesiredCount:
+    Default: '1'
+    Description: Desired Number of Containers deployed
+    Type: String    
+  Owner:
+    Default: 'Kevin Price'
+    Description: Owner Distribution List
+    Type: String      
+
+Resources:
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${TaskName}
+      RetentionInDays: 30 
+
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${TaskName}-notifications  
+        
+  ECSServiceRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ecs.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: ecs-service
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+            - elasticloadbalancing:Describe*
+            - elasticloadbalancing:DeregisterInstancesFromLoadBalancer
+            - elasticloadbalancing:RegisterInstancesWithLoadBalancer
+            - ec2:Describe*
+            - ec2:AuthorizeSecurityGroupIngress
+            - elasticloadbalancing:DeregisterTargets
+            - elasticloadbalancing:RegisterTargets
+            Resource: "*"
+    Type: AWS::IAM::Role
+
+  LoadBalancer:
+    Properties:
+      Subnets:
+        Ref: LoadBalancerSubnets
+      IpAddressType: "dualstack"
+      LoadBalancerAttributes:
+      - Key: idle_timeout.timeout_seconds
+        Value: '300'        
+      Scheme:
+        Ref: LoadBalancerScheme
+      SecurityGroups:
+        Ref: LoadBalancerSecurityGroup
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      UnhealthyThresholdCount: 4
+      HealthyThresholdCount: 2
+      HealthCheckPath: !Ref HealthCheckPath
+      Matcher:
+        HttpCode: !Ref HealthCheckResponse
+      Name:
+        Fn::Sub: ${TaskName}
+      Port: !Ref ContainerPort
+      TargetGroupAttributes:
+      - Key: stickiness.enabled
+        Value: true
+      - Key: stickiness.type
+        Value: lb_cookie
+      - Key: 'deregistration_delay.timeout_seconds'
+        Value: '30'                 
+      Protocol: HTTP
+      Tags:
+        - Key: 'Owner'
+          Value: !Ref Owner
+        - Key: 'Environment'
+          Value: !Ref ApplicationEnvironment
+      VpcId: !Ref VPC
+    DependsOn:
+    - LoadBalancer
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn:
+          Ref: TargetGroup
+      LoadBalancerArn:
+        Ref: LoadBalancer
+      Port: '443'
+      Protocol: HTTPS
+      Certificates:
+      - CertificateArn:
+          Ref: CertificateArn
+
+  ECSService:
+    Properties:
+      Cluster:
+        Ref: ECSCluster
+      DesiredCount:
+        Ref: DesiredCount
+      LoadBalancers:
+      - ContainerName: !Sub ${TaskName}
+        ContainerPort:
+          Ref: ContainerPort
+        TargetGroupArn:
+          Ref: TargetGroup
+      Role:
+        Ref: ECSServiceRole
+      TaskDefinition:
+        Ref: TaskDefinition
+    DependsOn: Listener
+    Type: AWS::ECS::Service
+
+  TaskDefinition:
+    Properties:
+      ContainerDefinitions:
+      - Name: !Sub ${TaskName}
+        Image:
+          Ref: DockerImage
+        Hostname: !Sub ${TaskName}
+        Memory:
+          Ref: ContainerMemory
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              !Sub /ecs/${TaskName}
+            awslogs-region:
+              Ref: AWS::Region                         
+        Essential: true
+        Hostname: !Sub ${TaskName}
+        PortMappings:
+        - ContainerPort:
+            Ref: ContainerPort          
+    Type: AWS::ECS::TaskDefinition
+
+
+
+               
