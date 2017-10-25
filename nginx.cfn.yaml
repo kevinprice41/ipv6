@@ -9,23 +9,19 @@ Parameters:
   TaskName:
     Description: The docker registry to pull the application
     Type: String
+    Default: nginx
   DockerImage:
     Description: The name of the docker image in the specified registry.  Format <registry>/<image>[:<tag>]
     Type: String
+    Default: 209403661276.dkr.ecr.us-east-1.amazonaws.com/nginx
   ECSCluster:
     Description: The ECS Cluster ID.
     Type: String
+    Default: prizyp
   ContainerPort:
     Description: The port to map to the container.
-    Type: String
-  ApplicationEnvironment:
-    Default: dev
-    Description: Enviroment variable to drive Application properties
-    Type: String
-    AllowedValues:
-    - dev
-    - stg
-    - prd   
+    Type: String 
+    Default: 80
   LoadBalancerScheme:
     Default: internal
     Description: Internal or External facing Load Balancer
@@ -51,6 +47,7 @@ Parameters:
   CertificateArn:
     Description: Load balancer certificate resource name.
     Type: String
+    Default: arn:aws:acm:us-east-1:209403661276:certificate/8f456529-2f97-4bdf-9df4-924810691587
   ContainerMemory:
     Default: '512'
     Description: Memory allocated to the container.
@@ -58,10 +55,6 @@ Parameters:
   DesiredCount:
     Default: '1'
     Description: Desired Number of Containers deployed
-    Type: String    
-  Owner:
-    Default: 'Kevin Price'
-    Description: Owner Distribution List
     Type: String      
 
 Resources:
@@ -71,11 +64,6 @@ Resources:
     Properties:
       LogGroupName: !Sub /ecs/${TaskName}
       RetentionInDays: 30 
-
-  SNSTopic:
-    Type: AWS::SNS::Topic
-    Properties:
-      TopicName: !Sub ${TaskName}-notifications  
         
   ECSServiceRole:
     Properties:
@@ -138,11 +126,6 @@ Resources:
       - Key: 'deregistration_delay.timeout_seconds'
         Value: '30'                 
       Protocol: HTTP
-      Tags:
-        - Key: 'Owner'
-          Value: !Ref Owner
-        - Key: 'Environment'
-          Value: !Ref ApplicationEnvironment
       VpcId: !Ref VPC
     DependsOn:
     - LoadBalancer
